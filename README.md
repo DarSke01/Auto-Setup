@@ -44,10 +44,10 @@ sudo xbps-install -Sy clamav timeshift
 Clone repository ini lalu jalankan script:  
 
 ```bash
-git clone https://github.com/<username>/<repo-name>.git
-cd <repo-name>
-chmod +x auto-setup.sh
-./auto-setup.sh
+git clone https://github.com/DarSke01/Auto-Setup.git
+cd Auto-Setup
+chmod +x autosh
+./auto.sh
 ```
 
 > ⚠️ **Peringatan**: Script ini akan melakukan perubahan sistem (install, cleanup, snapshot).  
@@ -67,14 +67,6 @@ Contoh tampilan fetch sederhana yang disediakan script:
   💾 Disk : 256GB SSD / 1TB HDD
 ──────────────────────────────
 ```
-
----
-
-## 🌱 Todo  
-
-- [ ] Tambah dukungan untuk `dnf` (Fedora/RHEL)  
-- [ ] Opsi custom dotfiles setup  
-- [ ] Menu interaktif  
 
 ---
 
