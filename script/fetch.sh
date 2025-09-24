@@ -1,56 +1,13 @@
 #!/bin/bash
 
-# Zig Color
+#Color
+CY='\033[0;36m'
+BL='\e[1;32m'
+GR='\e[38;5;242m'
 
-# Pink-Purple Gradient Colors
-PINK='\033[38;5;205m'
-PINK2='\033[38;5;204m'
-PINK3='\033[38;5;207m'
-PURPLE='\033[38;5;141m'
-PURPLE2='\033[38;5;135m'
-PURPLE3='\033[38;5;129m'
-DARK_PURPLE='\033[38;5;93m'
-
-# Color Base
+#Color Base
 WHITE='\033[1;37m'
-GREEN='\033[0;32m'
-CYAN='\033[0;36m'
 NC='\033[0m' # No Color
-
-# Function to create gradient effect
-gradient_text() {
-    local text="$1"
-    local colors=("$PINK" "$PINK2" "$PINK3" "$PURPLE" "$PURPLE2" "$PURPLE3" "$DARK_PURPLE")
-    local length=${#text}
-    local color_step=$(( length / ${#colors} ))
-    local output=""
-    
-    for (( i=0; i<${#text}; i++ )); do
-        local color_idx=$(( i / color_step ))
-        [[ $color_idx -ge ${#colors} ]] && color_idx=$(( ${#colors} - 1 ))
-        output+="${colors[$color_idx]}${text:$i:1}"
-    done
-    
-    echo -e "${output}${NC}"
-}
-
-
-# Battery Health Function
-battery_health() {
-    BAT_PATH="/sys/class/power_supply/BAT0"
-    if [ -d "$BAT_PATH" ]; then
-        design=$(cat "$BAT_PATH/charge_full_design" 2>/dev/null || cat "$BAT_PATH/energy_full_design")
-        full=$(cat "$BAT_PATH/charge_full" 2>/dev/null || cat "$BAT_PATH/energy_full")
-        if [ -n "$design" ] && [ -n "$full" ]; then
-            health=$(( 100 * full / design ))
-            echo -e "${GREEN}$health% (Full: $full / Design: $design)"
-        else
-            echo -e "${YELLOW}Tidak dapat membaca kapasitas."
-        fi
-    else
-        echo -e "${RED}Baterai tidak ditemukan."
-    fi
-}
 
 # Get system information
 OS=$(grep PRETTY_NAME /etc/os-release | cut -d'"' -f2)
@@ -64,34 +21,6 @@ CPU=$(grep 'model name' /proc/cpuinfo | head -n1 | cut -d':' -f2 | sed 's/^[ \t]
 GPU=$(lspci | grep -i 'vga\|3d\|2d' | cut -d':' -f3 | xargs | head -n1)
 SHELL=$(basename "$SHELL")
 BATTERY_HEALTH=$(battery_health)
-
-# Screen resolution detection
-if [ -x "$(command -v xrandr)" ]; then
-    RESOLUTION=$(xrandr | grep '*' | awk '{print $1}')
-elif [ -x "$(command -v swaymsg)" ]; then
-    RESOLUTION=$(swaymsg -t get_outputs | jq -r '.[] | select(.focused) | .current_mode.width + "x" + .current_mode.height')
-else
-    RESOLUTION="Unknown"
-fi
-
-# IP Detection
-IP=$(ip route get 1 2>/dev/null | awk '{print $7; exit}')
-if [ -z "$IP" ]; then
-    IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-fi
-if [ -z "$IP" ]; then
-    IP="Not connected"
-fi
-
-# Storage Information
-get_storage() {
-    local mount_point=$1
-    df -h $mount_point 2>/dev/null | awk 'NR==2 {print $3"/"$2" ("$5")"}'
-}
-
-ROOT_STORAGE=$(get_storage /)
-HOME_STORAGE=$(get_storage /home)
-EXTEND_STORAGE=$(get_storage /home/Extend)
 
 # Detect package manager
 if [ -x "$(command -v apt)" ]; then
@@ -108,28 +37,243 @@ else
     PKG_MANAGER="Unknown"
 fi
 
-# Clear Screen Before Display
+# Detect WM/DE + Display Server
+detect_wmde_display() {
+    local DE="${XDG_CURRENT_DESKTOP:-$DESKTOP_SESSION}"
+    DE="${DE:-$GDMSESSION}"
+
+    # List DE & WM
+    local DE_CANDIDATES="gnome-shell|plasmashell|xfce4-session|mate-session|cinnamon|lxsession|budgie-desktop|enlightenment"
+    local WM_CANDIDATES="sway|hyprland|wayfire|i3|i3-gaps|bspwm|awesome|openbox|fluxbox|herbstluftwm|spectrwm|qtile|xmonad"
+
+    local PROC_LIST
+    PROC_LIST=$(ps -eo comm= | awk '{print tolower($0)}')
+
+    # Display Server
+    local DISPLAY_SERVER="Unknown"
+    if [ -n "$WAYLAND_DISPLAY" ] || [ "${XDG_SESSION_TYPE,,}" = "wayland" ]; then
+        DISPLAY_SERVER="Wayland"
+    elif [ -n "$DISPLAY" ] || [ "${XDG_SESSION_TYPE,,}" = "x11" ]; then
+        DISPLAY_SERVER="X11"
+    fi
+
+    # Check DE
+    local found_de
+    found_de=$(echo "$PROC_LIST" | grep -E -m1 "$DE_CANDIDATES")
+    if [ -n "$found_de" ] || [[ "$DE" =~ (GNOME|KDE|XFCE|MATE|Cinnamon|LXDE|LXQt|Budgie) ]]; then
+        echo "DE : ${DE:-$found_de} ($DISPLAY_SERVER)"
+        return
+    fi
+
+    # if not DE → check WM
+    local found_wm
+    found_wm=$(echo "$PROC_LIST" | grep -E -m1 "$WM_CANDIDATES")
+    if [ -n "$found_wm" ]; then
+        echo "WM : $found_wm ($DISPLAY_SERVER)"
+        return
+    fi
+
+    # Fallback
+    echo "WM/DE : Unknown ($DISPLAY_SERVER)"
+}
+
+# Screen resolution detection
+if [ -x "$(command -v xrandr)" ]; then
+    RESOLUTION=$(xrandr | grep '*' | awk '{print $1}')
+elif [ -x "$(command -v swaymsg)" ]; then
+    RESOLUTION=$(swaymsg -t get_outputs | jq -r '.[] | select(.focused) | .current_mode.width + "x" + .current_mode.height')
+else
+    RESOLUTION="Unknown"
+fi
+
+# Detect GTK/Qt Theme
+detect_theme() {
+    local THEME="Unknown"
+
+    if [ -f "$HOME/.config/gtk-3.0/settings.ini" ]; then
+        THEME=$(grep -i "gtk-theme-name" "$HOME/.config/gtk-3.0/settings.ini" | cut -d= -f2)
+    elif [ -f "$HOME/.gtkrc-2.0" ]; then
+        THEME=$(grep -i "gtk-theme-name" "$HOME/.gtkrc-2.0" | cut -d\" -f2)
+    elif command -v lookandfeeltool &>/dev/null; then
+        THEME=$(lookandfeeltool -l | head -n1)
+    fi
+
+    echo "${THEME:-Unknown}"
+}
+
+# Detect Icon Theme
+detect_icons() {
+    local ICON="Unknown"
+
+    if [ -f "$HOME/.config/gtk-3.0/settings.ini" ]; then
+        ICON=$(grep -i "gtk-icon-theme-name" "$HOME/.config/gtk-3.0/settings.ini" | cut -d= -f2)
+    elif [ -f "$HOME/.gtkrc-2.0" ]; then
+        ICON=$(grep -i "gtk-icon-theme-name" "$HOME/.gtkrc-2.0" | cut -d\" -f2)
+    fi
+
+    echo "${ICON:-Unknown}"
+}
+
+# Detect Font
+detect_font() {
+    local FONT="Unknown"
+
+    if [ -f "$HOME/.config/gtk-3.0/settings.ini" ]; then
+        FONT=$(grep -i "gtk-font-name" "$HOME/.config/gtk-3.0/settings.ini" | cut -d= -f2)
+    elif [ -f "$HOME/.gtkrc-2.0" ]; then
+        FONT=$(grep -i "gtk-font-name" "$HOME/.gtkrc-2.0" | cut -d\" -f2)
+    fi
+
+    echo "${FONT:-Unknown}"
+}
+
+# Detect Terminal Emulator
+detect_terminal() {
+    local TERM_NAME="Unknown"
+
+    # Check environment variable
+    if [ -n "$TERM_PROGRAM" ]; then
+        TERM_NAME="$TERM_PROGRAM"
+    elif [ -n "$TERMINAL_EMULATOR" ]; then
+        TERM_NAME="$TERMINAL_EMULATOR"
+    else
+        # try found process parent
+        local parent
+        parent=$(ps -o comm= -p $(ps -o ppid= -p $$))
+        TERM_NAME="$parent"
+    fi
+
+    echo "Terminal : $TERM_NAME"
+}
+
+# Storage Information
+get_storage() {
+    local mount_point=$1
+    df -h $mount_point 2>/dev/null | awk 'NR==2 {print $3"/"$2" ("$5")"}'
+}
+
+ROOT_STORAGE=$(get_storage /)
+HOME_STORAGE=$(get_storage /home)
+EXTEND_STORAGE=$(get_storage /home/Extend)
+
+# Detect Swap
+detect_swap() {
+    local SWAP_TOTAL=$(awk '/SwapTotal/ {print $2}' /proc/meminfo)
+    if [ "$SWAP_TOTAL" -gt 0 ]; then
+        awk -v s=$SWAP_TOTAL 'BEGIN{printf "%.2f GiB\n", s/1024/1024}'
+    else
+        echo "0 GiB"
+    fi
+}
+
+# Detect Battery / AC Power
+detect_power() {
+    local POWER_PATH="/sys/class/power_supply"
+    local BATTERY=""
+    local AC=""
+    local STATUS=""
+    local CAPACITY=""
+
+    # Check device
+    [ -d "$POWER_PATH" ] || { echo "Power: Unknown"; return; }
+    BATTERY=$(ls "$POWER_PATH" | grep -i 'BAT' | head -n1)
+    AC=$(ls "$POWER_PATH" | grep -i 'AC' | head -n1)
+
+    # if battery
+    if [ -n "$BATTERY" ]; then
+        STATUS=$(cat "$POWER_PATH/$BATTERY/status" 2>/dev/null)
+        CAPACITY=$(cat "$POWER_PATH/$BATTERY/capacity" 2>/dev/null)
+
+        if [ -n "$STATUS" ] && [ -n "$CAPACITY" ]; then
+            echo "Battery : ${CAPACITY}% [${STATUS}]"
+            return
+        fi
+    fi
+
+    # if not battery but AC
+    if [ -n "$AC" ]; then
+        local AC_STATUS=$(cat "$POWER_PATH/$AC/online" 2>/dev/null)
+        if [ "$AC_STATUS" = "1" ]; then
+            echo "Power : AC Connected"
+            return
+        fi
+    fi
+
+    # Fallback
+    echo "Power : Unknown"
+}
+
+
+# IP Detection
+IP=$(ip route get 1 2>/dev/null | awk '{print $7; exit}')
+if [ -z "$IP" ]; then
+    IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+fi
+if [ -z "$IP" ]; then
+    IP="Not connected"
+fi
+
+# Detect Locale
+detect_locale() {
+    echo "${LANG:-$(locale | grep LANG= | cut -d= -f2)}"
+}
+
+# Clear screen before show on display
 clear
 
+echo -e "                                            ╭─────────────────────╮"
+echo -e "                                 ${GR}@@    ${CY}@${NC}    │${CY}     "SYSTEM INFO"${NC}     │"
+echo -e "                               ${GR}@%%    ${CY}@@${NC}    ╰─────────────────────╯"
+echo -e "                           ${GR}@---%%   ${CY}%@@@      ${BL}[+] OS : $OS"
+echo -e "                         ${GR}@----%   ${CY}%%---%      ${BL}[+] Hostname : $HOSTNAME"
+echo -e "                      ${GR}@===-*%   ${CY}%-----%       ${BL}[+] Kernel : $KERNEL"
+echo -e "                   ${GR}@=====%    ${CY}%==---%         ${BL}[+] Packages : $PKG_MANAGER"
+echo -e "                ${GR}+%%%==%    ${CY}%==--*%            ${BL}[+] Shell : $SHELL"
+echo -e "             ${GR}+%%%%%%=%   ${CY}%====+%%             ${BL}[+] Resolution : $RESOLUTION"
+echo -e "         ${GR}%#@@%%%%%%%#%  ${CY}======%               ${BL}[+] $(detect_wmde_display)"
+echo -e "        ${GR}@@@@@@@  @@%#%  ${CY}===%@                 ${BL}[+] Theme : $detect_theme"
+echo -e "    ${GR}%#@@@@@@     @@@#%  ${CY}+++%                  ${BL}[+] Icons : $detect_icons"
+echo -e "   ${GR}%#@@@@        @@+#%  ${CY}+++%                  ${BL}[+] Font : $detect_font"
+echo -e "  ${GR}%#@@           \%*#%  ${CY}+++%                  ${BL}[+] $(detect_terminal)"
+echo -e " ${GR}@@@               @#%  ${CY}+++%                  ${BL}[+] CPU : $CPU"
+echo -e " ${GR}@@              @%%%%  ${CY}+++%                  ${BL}[+] GPU : $GPU"
+echo -e " ${GR}@               \@@%%  ${CY}**+%                  ${BL}[+] Ram : $RAM_USED/$RAM_TOTAL"
+echo -e "                  ${GR}@@#%  ${CY}***%                  ${BL}[+] Swap : $detect_swap"
+echo -e "                  ${GR}@@#%  ${CY}***%                  ${BL}[+] Root-Storage : ${ROOT_STORAGE:-Not available}"
+echo -e "                  ${GR}@@#%  ${CY}***%                  ${BL}[+] Home-Storage : ${HOME_STORAGE:-Not available}"
+echo -e "                  ${GR}@@#%#  ${CY}**%                  ${BL}[+] Extend-Storage : ${EXTEND_STORAGE:-Not available}"
+echo -e "                   ${GR}*#%##  ${CY}*%                  ${BL}[+] IP : $IP"
+echo -e "                     ${GR}%=##  ${CY}%                  ${BL}[+] $(detect_power)"
+echo -e "                       ${GR}@%  ${CY}%                  ${BL}[+] Locale : $(detect_locale)"
+echo -e "                         ${GR}@ ${CY}@                  ${BL}[!] I USE $OS BTW"
+echo -e "                           ${CY}@                ╰────────────────────────────────────────────╯${NC}"
+echo -e " "
 
-echo -e "${PINK2} ............................................   ${PINK}╭────────────────────────────────────────────╮"
-echo -e " .......... .:@@= ...........................   │     $(gradient_text "✧･ﾟ: *✧･ﾟ:* SYSTEM INFO *:･ﾟ✧*:･ﾟ✧")     │"
-echo -e " ........ :%% . %%%%% ......... %%%% ........   ╰────────────────────────────────────────────╯${NC}"
-echo -e " ....... %= ..... %%%%.........%%% ..........     ${PURPLE}[+] OS : $OS"
-echo -e " ...... % ........ %%%........%%% ...........     ${PURPLE}[+] Hostname : $HOSTNAME"
-echo -e " ..... %% ........ %%%.......%%% ............     ${PURPLE}[+] Packages : $PKG_MANAGER"
-echo -e " ..... %% ........ %%%.......%% .............     ${PURPLE2}[+] Kernel : $KERNEL"
-echo -e " ...... %%%  @ .. %%%.......%%% .............     ${PURPLE2}[+] Shell : $SHELL"
-echo -e " ................ %%%......%%% ..............     ${PURPLE2}[+] Resolution : $RESOLUTION"
-echo -e " ............... %%%.......%%= ..............     ${PURPLE3}[+] Ram : $RAM_USED/$RAM_TOTAL"
-echo -e " ............... %%%......%%% ...............     ${PURPLE3}[+] CPU : $CPU"
-echo -e " ............... %%%....%@%% ................     ${PURPLE3}[+] GPU : $GPU"
-echo -e " ................ %#%%%#.%%@ ................     ${PINK2}[+] IP : $IP"
-echo -e " ...................... %%% .................     ${PINK3}[+] Root-Storage : ${ROOT_STORAGE:-Not available}"
-echo -e " ..................... %%% ..................     ${PINK3}[+] Home-Storage : ${HOME_STORAGE:-Not available}"
-echo -e " ......... +%%%: .... %%% ...................     ${PINK3}[+] Extend-Storage : ${EXTEND_STORAGE:-Not available}"
-echo -e " ......... %%% ..... %%% ....................     ${PINK3}[!] I USE VOID BTW!🐧🤫"
-echo -e " ......... %%% ... +%% ......................     ${PINK2}[!] I AM User SanYun OS❄️ "
-echo -e " ............ %%%%% .........................     ${RUST_LIGHT_GRAY}[!] Battery Health🔋 : $BATTERY_HEALTH ${PINK2}"
-echo -e " ............................................   ╰────────────────────────────────────────────╯${NC}"
+
+# Logo T4n OS
+#                                  @@    @
+#                                @-%%   @@
+#                            @----%%  %@@@
+#                          @----%   %%---%
+#                       @===--*%  %-----%
+#                    @======%   %==---%
+#                 +%%%====%   %==--*%
+#              +%%%%%%=%%  %====+%%
+#          %#@@%%%%%%%#%  ======%
+#         @@@@@@@  @@%#%  ===%@
+#     %#@@@@@@     @@@#%  +++%
+#    %#@@@@        @@+#%  +++%
+#   %#@@           \%*#%  +++%
+#  @@@               @#%  +++%
+#  @@              @%%%%  +++%
+#  @               \@@%%  **+%
+#                   @@#%  ***%
+#                   @@#%  ***%
+#                   @@#%  ***%
+#                   @@#%#  **%
+#                    *#%##  *%
+#                      %=##  %
+#                        @%  %
+#                          @ @
+#                            @
 
